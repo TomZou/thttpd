@@ -1,0 +1,124 @@
+#!/usr/bin/expect  --
+
+proc Usage_Exit {myself} {
+	puts ""
+	puts "### USAGE:  $myself ip user passwd port sourcefile destdir timeout"
+	puts ""
+	puts "            sourcefile: a file or directory to be transferred"
+	puts "                        ps 需要拷贝目录时目录名后不要带 /, 否则会拷贝该目录下的所有文件"
+	puts "            destdir:    the location that the sourcefile to be put into"
+	puts "            timeout:    timeout of expect, s, -1 means no timeout"
+	puts ""
+	exit 1
+}
+
+if { [llength $argv] < 7 } {
+	Usage_Exit $argv0
+}
+
+set ip [lindex $argv 0]
+set user [lindex $argv 1]
+set pkey [lindex $argv 2]
+set port [lindex $argv 3]
+set sourcefile [lindex $argv 4]
+set destdir [lindex $argv 5]
+set timeoutflag [lindex $argv 6]
+
+set yesnoflag 0
+set timeout $timeoutflag
+
+
+for {} {1} {} {
+
+# for is only used to retry when "Interrupted system call" occured
+
+# rsync: -a, --archive, archive mode, equivalent to -rlptgoD
+# rsync: -r, --recursive, recurse into directories
+# rsync: -t, --times, preserve times
+# rsync: -z, --compress, 传输时压缩
+# rsync: --progress 显示传输进度
+# ps: 需要把源目录整个同步到dst时，目录名后不要带/；带/是把源目录下所有文件同步到dst，不包含源目录本身
+# 从windows同步到linux要设置权限，--chmod=Du=rwx,Dog=rx,Fug=rw,Fo=r 是把目录设置为755，文件设置为664，D目录 F文件 uog分别是owner/other/group
+# --include 用来指示哪些文件不被排除
+# --exclude 用来指示哪些文件被排除
+# -e 是表示用ssh连接方式
+
+spawn rsync -avz --progress --chmod=Du=rwx,Dog=rx,Fug=rw,Fo=r \
+	--exclude ".DS_Store" --exclude ".git" --exclude ".idea" --exclude ".vscode" --exclude "node_modules" --exclude "e2e" --exclude "runtime" \
+	-e "ssh -l$user -p$port -i$pkey" -- $sourcefile $ip:$destdir
+
+expect 	{
+
+	"yes/no)?" {
+		set yesnoflag 1
+		send "yes\r"
+		break;
+	}
+
+	"FATAL" {
+		puts "\nCONNECTERROR: $ip occur FATAL ERROR!!!\n"
+		exit 1
+	}
+
+	timeout {
+		puts "\nCONNECTERROR: $ip logon TIMEOUT!!!\n"
+		exit 1
+	}
+
+	"No route to host" {
+		puts "\nCONNECTERROR: $ip No route to host!!!\n"
+		exit 1
+	}
+
+	"Connection Refused" {
+		puts "\nCONNECTERROR: $ip Connection Refused!!!\n"
+		exit 1
+	}
+
+	"Connection refused" {
+		puts "\nCONNECTERROR: $ip Connection Refused!!!\n"
+		exit 1
+	}
+
+	"Host key verification failed" {
+		puts "\nCONNECTERROR: $ip Host key verification failed!!!\n"
+		exit 1
+	}
+
+	"Illegal host key" {
+		puts "\nCONNECTERROR: $ip Illegal host key!!!\n"
+		exit 1
+	}
+
+	"Connection Timed Out" {
+		puts "\nCONNECTERROR: $ip logon TIMEOUT!!!\n"
+		exit 1
+	}
+
+	"Interrupted system call" {
+		puts "\n$ip Interrupted system call!!!\n"
+	}
+
+	eof {
+		puts "EOF: $ip\n"
+		exit 0;
+	}
+}
+
+}
+
+if { $yesnoflag == 1 } {
+	expect {
+		"yes/no)?" {
+			set yesnoflag 2
+			send "yes\r"
+		}
+	}
+}
+
+expect {
+	eof {
+		puts "EOF: $ip\n"
+		exit 0;
+	}
+}
